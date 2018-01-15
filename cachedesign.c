@@ -9,10 +9,11 @@
 #include <string.h>
 #include <stdlib.h>
 
-typedef unsigned char uchar;
+/*typedef unsigned char uchar;
 typedef unsigned short ushort;
-typedef unsigned int uint;
-typedef unsigned long long ulong;
+typedef unsigned int uint;*/
+#define uchar unsigned char
+#define uint unsigned int
 
 #define CACHE_SIZE (128 << 10) // 128K
 #define BLOCK_SIZE 4 //4B
@@ -28,32 +29,31 @@ typedef unsigned long long ulong;
 #define PRE(tag) ((tag) & 0x3)
 
 
-
-typedef struct trace_item
+struct trace_item
 {
-	char load_store;
-	uint data;
-} trace_item;
+	unsigned int load_store;
+	unsigned int data;
+};
 
-typedef struct cache_line
+struct cache_line
 {
-	uchar valid;
+	uint valid;
 	uint tag; // short is two small for index of 4-way SA
 	//uint data;
-} cache_line;
+} ;
 
 
-typedef struct cache_sa
+struct cache_sa
 {
-	uchar access[4];
-	cache_line data[4];
-} cache_sa;
+	uint access[4];
+	struct cache_line data[4];
+};
 
 char hex_array[16] = {
 	'0', '1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'
 };
 
-int read_next_trace_batch(FILE* file, trace_item* traces, int n)
+int read_next_trace_batch(FILE* file, struct trace_item* traces, int n)
 {
 	if(n <= 0 || file == NULL || traces == NULL)
 		return 0;
@@ -85,7 +85,7 @@ void itohexstr(uint number, char* str)
 	str[7] = hex_array[(number) & 0xF];
 }
 
-void write_traces(FILE* file, trace_item* traces, int n)
+void write_traces(FILE* file, struct trace_item* traces, int n)
 {
 	int i;
 	char buffer[LINE_MAX_LENGTH];
@@ -116,11 +116,16 @@ void direct_map_cache(FILE* input_file, FILE* output_file)
 	uint tag, index;
 
 	//direct map cache
-	cache_line* dmcache = (cache_line*)malloc(index_size * sizeof(cache_line));
-	memset((void*)dmcache, 0, index_size * sizeof(cache_line));
+	struct cache_line* dmcache = (struct cache_line*)malloc(index_size * sizeof(struct cache_line));
+	//memset((void*)dmcache, 0, index_size * sizeof(cache_line));
+	for(i = 0;i < index_size; ++i)
+	{
+		dmcache[i].valid = INVALID;
+		dmcache[i].tag = 0;
+	}
 
-	trace_item* traces = (trace_item*)malloc(nlines * sizeof(trace_item));
-	trace_item* log_miss_traces = (trace_item*)malloc(nlines * sizeof(trace_item));
+	struct trace_item* traces = (struct trace_item*)malloc((nlines+1) * sizeof(struct trace_item));
+	struct trace_item* log_miss_traces = (struct trace_item*)malloc((nlines+1) * sizeof(struct trace_item));
 
 	while(1)
 	{
@@ -141,12 +146,12 @@ void direct_map_cache(FILE* input_file, FILE* output_file)
 				dmcache[index].tag = tag;
 				dmcache[index].valid = VALID;
 			}
+			if(cnt_output_log == nlines && cnt_output_log)
+			{
+				write_traces(output_file, log_miss_traces, cnt_output_log);
+				cnt_output_log = 0;
+			}
 
-		}
-		if(cnt_miss % nlines == 0 && cnt_miss)
-		{
-			write_traces(output_file, log_miss_traces, cnt_output_log);
-			cnt_output_log = 0;
 		}
 	}
 	if(cnt_output_log)
@@ -156,7 +161,7 @@ void direct_map_cache(FILE* input_file, FILE* output_file)
 	free(traces);
 	free(log_miss_traces);
 
-	printf("cnt_hit : %d, cnt_miss: %d, hit rate: %.5f\n", cnt_hit, cnt_miss, (cnt_hit*1.0)/(cnt_hit+cnt_miss));
+	printf("direct mapcnt_hit : %d, cnt_miss: %d, hit rate: %.5f\n", cnt_hit, cnt_miss, (cnt_hit*1.0)/(cnt_hit+cnt_miss));
 }
 
 
@@ -178,11 +183,11 @@ void SA_map_cache(FILE* input_file, FILE* output_file, int ways)
 	uint tag, index, hit;
 
 	//SA
-	cache_sa* sacache = (cache_sa*)malloc(index_size * sizeof(cache_sa));
-	memset((void*)sacache, 0, index_size * sizeof(cache_sa));
+	struct cache_sa* sacache = (struct cache_sa*)malloc(index_size * sizeof(struct cache_sa));
+	memset((void*)sacache, 0, index_size * sizeof(struct cache_sa));
 
-	trace_item* traces = (trace_item*)malloc(nlines * sizeof(trace_item));
-	trace_item* log_miss_traces = (trace_item*)malloc(nlines * sizeof(trace_item));
+	struct trace_item* traces = (struct trace_item*)malloc(nlines * sizeof(struct trace_item));
+	struct trace_item* log_miss_traces = (struct trace_item*)malloc(nlines * sizeof(struct trace_item));
 
 	while(1)
 	{
@@ -225,12 +230,12 @@ void SA_map_cache(FILE* input_file, FILE* output_file, int ways)
 				sacache[index].data[0].valid = VALID;
 				sacache[index].data[0].tag = tag;
 			}
+			if(cnt_output_log % 100 == 0 && cnt_output_log)
+			{
+				write_traces(output_file, log_miss_traces, cnt_output_log);
+				cnt_output_log = 0;
+			}
 
-		}
-		if(cnt_output_log % 100 == 0 && cnt_output_log)
-		{
-			write_traces(output_file, log_miss_traces, cnt_output_log);
-			++ cnt_output_log;
 		}
 	}
 
@@ -241,7 +246,7 @@ void SA_map_cache(FILE* input_file, FILE* output_file, int ways)
 	free(traces);
 	free(log_miss_traces);
 
-	printf("ways : %d, cnt_hit : %d, cnt_miss: %d, hit rate: %.5f\n", ways, cnt_hit, cnt_miss, (cnt_hit*1.0)/(cnt_hit+cnt_miss));
+	printf("SA ways : %d, cnt_hit : %d, cnt_miss: %d, hit rate: %.5f\n", ways, cnt_hit, cnt_miss, (cnt_hit*1.0)/(cnt_hit+cnt_miss));
 
 }
 
@@ -258,8 +263,8 @@ void MRU_map_cache(FILE* input_file, FILE* output_file)
 	uint tag, index, hit;
 
 	//SA
-	cache_sa* sacache = (cache_sa*)malloc(index_size * sizeof(cache_sa));
-	memset((void*)sacache, 0, index_size * sizeof(cache_sa));
+	struct cache_sa* sacache = (struct cache_sa*)malloc(index_size * sizeof(struct cache_sa));
+	memset((void*)sacache, 0, index_size * sizeof(struct cache_sa));
 	for(i = 0;i < index_size; ++i)
 	{
 		sacache[i].access[1] = 1;
@@ -267,10 +272,10 @@ void MRU_map_cache(FILE* input_file, FILE* output_file)
 		sacache[i].access[3] = 3;
 	}
 
-	trace_item* traces = (trace_item*)malloc(nlines * sizeof(trace_item));
-	trace_item* log_miss_traces = (trace_item*)malloc(nlines * sizeof(trace_item));
+	struct trace_item* traces = (struct trace_item*)malloc(nlines * sizeof(struct trace_item));
+	struct trace_item* log_miss_traces = (struct trace_item*)malloc(nlines * sizeof(struct trace_item));
 
-	cache_sa* p = NULL;
+	struct cache_sa* p = NULL;
 	uchar tmp;
 
 	while(1)
@@ -327,12 +332,12 @@ void MRU_map_cache(FILE* input_file, FILE* output_file)
 				p->data[tmp].tag = tag;
 				p->access[0] = tmp;
 			}
+			if(cnt_output_log % 100 == 0 && cnt_output_log)
+			{
+				write_traces(output_file, log_miss_traces, cnt_output_log);
+				cnt_output_log = 0;
+			}
 
-		}
-		if(cnt_output_log % 100 == 0 && cnt_output_log)
-		{
-			write_traces(output_file, log_miss_traces, cnt_output_log);
-			++ cnt_output_log;
 		}
 	}
 
@@ -343,7 +348,7 @@ void MRU_map_cache(FILE* input_file, FILE* output_file)
 	free(traces);
 	free(log_miss_traces);
 
-	printf("cnt_hit_once : %d, cnt_hit_notonce : %d, cnt_hit : %d, cnt_miss: %d, oncehit rate: %.5f, notoncehit rate: %.5f,hit rate: %.5f\n", 
+	printf("MRU cnt_hit_once : %d, cnt_hit_notonce : %d, cnt_hit : %d, cnt_miss: %d, oncehit rate: %.5f, notoncehit rate: %.5f,hit rate: %.5f\n", 
 			cnt_hit_once, cnt_hit_notonce, cnt_hit, cnt_miss, 
 			(cnt_hit_once*1.0)/(cnt_hit+cnt_miss), (cnt_hit_notonce*1.0)/(cnt_hit+cnt_miss), (cnt_hit*1.0)/(cnt_hit+cnt_miss));
 
@@ -362,8 +367,8 @@ void MultiColumn_map_cache(FILE* input_file, FILE* output_file)
 	uint tag, index, hit, pre;
 
 	//SA
-	cache_sa* sacache = (cache_sa*)malloc(index_size * sizeof(cache_sa));
-	memset((void*)sacache, 0, index_size * sizeof(cache_sa));
+	struct cache_sa* sacache = (struct cache_sa*)malloc(index_size * sizeof(struct cache_sa));
+	memset((void*)sacache, 0, index_size * sizeof(struct cache_sa));
 	for(i = 0;i < index_size; ++i)
 	{
 		sacache[i].access[1] = 1;
@@ -371,12 +376,12 @@ void MultiColumn_map_cache(FILE* input_file, FILE* output_file)
 		sacache[i].access[3] = 3;
 	}
 
-	trace_item* traces = (trace_item*)malloc(nlines * sizeof(trace_item));
-	trace_item* log_miss_traces = (trace_item*)malloc(nlines * sizeof(trace_item));
+	struct trace_item* traces = (struct trace_item*)malloc(nlines * sizeof(struct trace_item));
+	struct trace_item* log_miss_traces = (struct trace_item*)malloc(nlines * sizeof(struct trace_item));
 
-	cache_sa* p = NULL;
+	struct cache_sa* p = NULL;
 	uchar tmp, preindex;
-	cache_line swapline;
+	struct cache_line swapline;
 
 	while(1)
 	{
@@ -458,12 +463,12 @@ void MultiColumn_map_cache(FILE* input_file, FILE* output_file)
 				p->access[0] = pre;
 
 			}
+			if(cnt_output_log % 100 == 0 && cnt_output_log)
+			{
+				write_traces(output_file, log_miss_traces, cnt_output_log);
+				cnt_output_log = 0;
+			}
 
-		}
-		if(cnt_output_log % 100 == 0 && cnt_output_log)
-		{
-			write_traces(output_file, log_miss_traces, cnt_output_log);
-			++ cnt_output_log;
 		}
 	}
 
@@ -474,7 +479,7 @@ void MultiColumn_map_cache(FILE* input_file, FILE* output_file)
 	free(traces);
 	free(log_miss_traces);
 
-	printf("cnt_hit_once : %d, cnt_hit_notonce : %d, cnt_hit : %d, cnt_miss: %d, oncehit rate: %.5f, notoncehit rate: %.5f,hit rate: %.5f\n", 
+	printf("multi-column cnt_hit_once : %d, cnt_hit_notonce : %d, cnt_hit : %d, cnt_miss: %d, oncehit rate: %.5f, notoncehit rate: %.5f,hit rate: %.5f\n", 
 			cnt_hit_once, cnt_hit_notonce, cnt_hit, cnt_miss, 
 			(cnt_hit_once*1.0)/(cnt_hit+cnt_miss), (cnt_hit_notonce*1.0)/(cnt_hit+cnt_miss), (cnt_hit*1.0)/(cnt_hit+cnt_miss));
 
@@ -501,9 +506,9 @@ void test_sa_map(FILE* file)
 	fclose(output_file);
 
 	fseek(file, 0, SEEK_SET);
-	output_file = fopen("sa4.txt", "w");
-	SA_map_cache(file, output_file, 4);
-	fclose(output_file);
+	FILE* output_file2 = fopen("sa4.txt", "w");
+	SA_map_cache(file, output_file2, 4);
+	fclose(output_file2);
 	
 }
 
@@ -538,9 +543,12 @@ int main(int argc, char* argv[])
 		return 0;
 	}
 
-	//test_direct_map(f);
-	//test_sa_map(f);
-	//test_MRU_map(f);
+	test_direct_map(f);
+
+	test_sa_map(f);
+
+	test_MRU_map(f);
+
 	test_MultiColumn_map(f);
 
 	fclose(f);
