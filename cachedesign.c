@@ -44,6 +44,7 @@ typedef struct cache_line
 
 typedef struct cache_sa
 {
+	uchar access[4];
 	cache_line data[4];
 } cache_sa;
 
@@ -243,6 +244,111 @@ void SA_map_cache(FILE* input_file, FILE* output_file, int ways)
 
 }
 
+void MRU_map_cache(FILE* input_file, FILE* output_file)
+{
+	int index_bits = 13;
+	int index_size = (8 << 10);
+	uint index_op = 0x00007FFC;
+	int tag_offset = index_bits + OFFSET;
+
+	int nlines = 100;
+	int cnt_miss = 0, cnt_hit = 0, cnt_hit_once = 0, cnt_hit_notonce = 0, cnt_output_log = 0;
+	int n, i, j, k;
+	uint tag, index, hit;
+
+	//SA
+	cache_sa* sacache = (cache_sa*)malloc(index_size * sizeof(cache_sa));
+	memset((void*)sacache, 0, index_size * sizeof(cache_sa));
+	for(i = 0;i < index_size; ++i)
+	{
+		sacache[i].access[1] = 1;
+		sacache[i].access[2] = 2;
+		sacache[i].access[3] = 3;
+	}
+
+	trace_item* traces = (trace_item*)malloc(nlines * sizeof(trace_item));
+	trace_item* log_miss_traces = (trace_item*)malloc(nlines * sizeof(trace_item));
+
+	cache_sa* p = NULL;
+	uchar tmp;
+
+	while(1)
+	{
+		n = read_next_trace_batch(input_file, traces, nlines);
+		if(n <= 0)
+			break;
+		for(i = 0; i < n; ++i)
+		{
+			tag = TAG(traces[i].data, tag_offset);
+			index = INDEX(traces[i].data, index_op);
+			p = &(sacache[index]);
+			hit = 0;
+			if(p->data[p->access[0]].valid == VALID && p->data[p->access[0]].tag == tag)
+			{
+				hit = 1;
+				++ cnt_hit_once;
+				++ cnt_hit;
+			}
+			else
+			{
+				for(j = 1;j < 4; ++ j)
+				{
+					if(p->data[p->access[j]].valid == VALID && p->data[p->access[j]].tag == tag)
+					{
+						hit = 1;
+						++ cnt_hit;
+						++ cnt_hit_notonce;
+						tmp = p->access[j];
+						k = j;
+						while(k)
+						{
+							p->access[k] = p->access[k-1];
+							-- k;
+						}
+						p->access[0] = tmp;
+						break;
+					}
+				}
+			}
+			if(!hit)
+			{
+				log_miss_traces[cnt_output_log] = traces[i];
+				++ cnt_output_log;
+				++ cnt_miss;
+				tmp = p->access[3];
+				k = 3;
+				while(k)
+				{
+					p->access[k] = p->access[k-1];
+					-- k;
+				}
+				p->data[tmp].valid = VALID;
+				p->data[tmp].tag = tag;
+				p->access[0] = tmp;
+			}
+
+		}
+		if(cnt_output_log % 100 == 0 && cnt_output_log)
+		{
+			write_traces(output_file, log_miss_traces, cnt_output_log);
+			++ cnt_output_log;
+		}
+	}
+
+	if(cnt_output_log)
+		write_traces(output_file, log_miss_traces, cnt_output_log);
+
+	free(sacache);
+	free(traces);
+	free(log_miss_traces);
+
+	printf("cnt_hit_once : %d, cnt_hit_notonce : %d, cnt_hit : %d, cnt_miss: %d, oncehit rate: %.5f, notoncehit rate: %.5f,hit rate: %.5f\n", 
+			cnt_hit_once, cnt_hit_notonce, cnt_hit, cnt_miss, 
+			(cnt_hit_once*1.0)/(cnt_hit+cnt_miss), (cnt_hit_notonce*1.0)/(cnt_hit+cnt_miss), (cnt_hit*1.0)/(cnt_hit+cnt_miss));
+
+}
+
+
 void test_direct_map(FILE* file)
 {
 
@@ -269,6 +375,14 @@ void test_sa_map(FILE* file)
 	
 }
 
+void test_MRU_map(FILE* file)
+{
+	fseek(file, 0, SEEK_SET);
+	FILE* output_file = fopen("mru.txt", "w");
+	MRU_map_cache(file, output_file);
+	fclose(output_file);
+}
+
 int main(int argc, char* argv[])
 {
 
@@ -285,7 +399,8 @@ int main(int argc, char* argv[])
 	}
 
 	//test_direct_map(f);
-	test_sa_map(f);
+	//test_sa_map(f);
+	test_MRU_map(f);
 
 	fclose(f);
 	return 0;
